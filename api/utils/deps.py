@@ -1,4 +1,5 @@
 from fastapi import Header, HTTPException, Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from typing import Optional, Tuple
 import uuid
@@ -47,42 +48,47 @@ def verify_jwt_token(token: str) -> Optional[dict]:
     except jwt.InvalidTokenError:
         logger.warning("Invalid JWT token provided")
         return None
-    
+
+bearer_scheme = HTTPBearer(auto_error=False)
+
 
 async def get_current_user_from_jwt(
-        authorization: Optional[str] = Header(None, alias="Authorization"),
-        db: Session = Depends(get_db)
-) -> Optional[User]:
-    """Extract user from JWT token"""
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
+    db: Session = Depends(get_db)
+):
     logger.debug("Attempting JWT authentication...")
-    if not authorization or not authorization.startswith("Bearer "):
-        logger.debug("Missing or invalid Bearer token in authorization header")
+
+    if not credentials:
+        logger.debug("Missing Bearer token in authorization header")
         return None
-    
-    jwt_token = authorization.replace("Bearer ", "")
+
+    # Extract raw JWT string
+    jwt_token = credentials.credentials
+
     token_payload = verify_jwt_token(jwt_token)
-    
+
     if not token_payload:
-        logger.warning("JWT token verification failed or token expired.")
+        logger.warning("JWT token verification failed or expired")
         return None
-    
+
     user_id_str = token_payload.get("sub")
     if not user_id_str:
-        logger.warning("No user ID ('sub') found in JWT token payload.")
+        logger.warning("No 'sub' found in JWT payload.")
         return None
-    
+
     try:
         parsed_user_id = uuid.UUID(user_id_str)
     except ValueError:
-        logger.error("Invalid UUID format for user ID in JWT token: %s", user_id_str)
+        logger.error(f"Invalid UUID in token: {user_id_str}")
         return None
-        
+
     jwt_user = User.fetch_one(db, id=parsed_user_id)
+
     if jwt_user:
-        logger.info("User authenticated via JWT: %s", parsed_user_id)
+        logger.info(f"User authenticated: {parsed_user_id}")
     else:
-        logger.warning("User not found in DB for ID from JWT: %s", parsed_user_id)
-        
+        logger.warning(f"User not found for ID: {parsed_user_id}")
+
     return jwt_user
 
 
