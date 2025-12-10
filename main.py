@@ -1,20 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
 from api.v1.routes import auth_route, api_key_route, wallet_route
-
 from fastapi import FastAPI
 from fastapi.security import HTTPBearer, APIKeyHeader
-app = FastAPI(
-    title="Wallet API",
-    description="API for wallet and key management.",
-    openapi_extra={
-        "security": [
-            {"BearerAuth": []},
-            {"APIKeyAuth": []},
-        ]
-    }
-)
 
 
 bearer_scheme = HTTPBearer(
@@ -25,6 +13,17 @@ bearer_scheme = HTTPBearer(
 api_key_scheme = APIKeyHeader(
     name="X-Api-Key",
     description="API Key passed in the custom X-Api-Key header"
+)
+
+app = FastAPI(
+    title="Wallet API",
+    description="API for wallet and key management.",
+    openapi_extra={
+        "security": [
+            {"BearerAuth": []},
+            {"APIKeyAuth": []},
+        ]
+    }
 )
 
 
@@ -49,7 +48,8 @@ async def root():
         "endpoints": {
             "auth": "/auth/google",
             "api_keys": "/keys/create",
-            "wallet": "/wallet/balance"
+            "wallet": "/wallet/balance",
+            "docs": "/docs"
         }
     }
 

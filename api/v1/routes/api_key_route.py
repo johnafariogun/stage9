@@ -29,7 +29,6 @@ class RolloverAPIKeyRequest(BaseModel):
 @router.post("/create")
 async def create_api_key(
     request: CreateAPIKeyRequest,
-
     auth_data: Tuple[User, Optional[APIKey]] = Depends(get_authenticated_user), 
     db: Session = Depends(get_db)
 ):
@@ -48,26 +47,26 @@ async def create_api_key(
                 context={"valid_formats": "1H, 1D, 1M, or 1Y"}
             )
         
-        active_keys = [
+        active_api_keys = [
             key for key in APIKey.fetch_all(db, user_id=user.id)
             if key.is_active()
         ]
         
-        if len(active_keys) >= 5:
+        if len(active_api_keys) >= 5:
             logger.warning("Max active API keys reached for user: %s", user.id)
             return fail_response(
                 status_code=400,
                 message="Maximum 5 active API keys allowed per user",
-                context={"active_keys_count": len(active_keys)}
+                context={"active_keys_count": len(active_api_keys)}
             )
         
         valid_permissions = ["deposit", "transfer", "read"]
-        for perm in request.permissions:
-            if perm not in valid_permissions:
-                logger.warning("Invalid permission requested: %s for user: %s", perm, user.id)
+        for permission in request.permissions:
+            if permission not in valid_permissions:
+                logger.warning("Invalid permission requested: %s for user: %s", permission, user.id)
                 return fail_response(
                     status_code=400,
-                    message=f"Invalid permission: {perm}",
+                    message=f"Invalid permission: {permission}",
                     context={"valid_permissions": valid_permissions}
                 )
         
@@ -151,17 +150,17 @@ async def rollover_api_key(
                 context={"valid_formats": "1H, 1D, 1M, or 1Y"}
             )
         
-        active_keys = [
+        active_api_keys = [
             key for key in APIKey.fetch_all(db, user_id=user.id)
             if key.is_active()
         ]
         
-        if len(active_keys) >= 5:
+        if len(active_api_keys) >= 5:
             logger.warning("Max active API keys reached during rollover attempt for user: %s", user.id)
             return fail_response(
                 status_code=400,
                 message="Maximum 5 active API keys allowed per user",
-                context={"active_keys_count": len(active_keys)}
+                context={"active_keys_count": len(active_api_keys)}
             )
         
         plain_key = generate_api_key()

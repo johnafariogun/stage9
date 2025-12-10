@@ -42,8 +42,8 @@ async def deposit_to_wallet(
             )
         
         # Get user's wallet
-        wallet = Wallet.fetch_one(db, user_id=user.id)
-        if not wallet:
+        user_wallet = Wallet.fetch_one(db, user_id=user.id)
+        if not user_wallet:
             logger.error(f"Deposit failed: Wallet not found for user_id: {user.id}")
             return fail_response(
                 status_code=404,
@@ -52,57 +52,58 @@ async def deposit_to_wallet(
             )
         
         # Generate unique reference
-        reference = f"dep_{uuid.uuid4().hex[:16]}"
-        logger.debug(f"Generated reference {reference} for deposit by user {user.id}")
+        transaction_reference = f"dep_{uuid.uuid4().hex[:16]}"
+        logger.debug(f"Generated reference {transaction_reference} for deposit by user {user.id}")
         
         # Create pending transaction
-        transaction = Transaction(
-            reference=reference,
-            wallet_id=wallet.id,
+        deposit_transaction = Transaction(
+            reference=transaction_reference,
+            wallet_id=user_wallet.id,
             user_id=user.id,
             type=TransactionType.DEPOSIT,
             direction=TransactionDirection.CREDIT,
             amount=request.amount,
             status=TransactionStatus.PENDING
         )
-        transaction.insert(db)
-        logger.info(f"Pending transaction created: {reference} for user {user.id}")
+        deposit_transaction.insert(db)
+        logger.info(f"Pending transaction created: {transaction_reference} for user {user.id}")
         
         # Initialize Paystack transaction
         try:
             paystack_response = await initialize_transaction(
                 email=user.email,
                 amount=request.amount,
-                reference=reference
+                reference=transaction_reference
             )
             
             if not paystack_response.get("status"):
-                logger.error(f"Paystack initialization failed for reference {reference}: {paystack_response.get('message')}")
-                transaction.status = TransactionStatus.FAILED
-                transaction.update(db)
+                logger.error(f"Paystack initialization failed for reference {transaction_reference}: {paystack_response.get('message')}")
+                deposit_transaction.status = TransactionStatus.FAILED
+                deposit_transaction.update(db)
                 return fail_response(
                     status_code=500,
                     message="Failed to initialize payment",
                     context={"response": paystack_response}
                 )
             
-            data = paystack_response.get("data", {})
-            logger.info(f"Paystack initialization successful for reference {reference}. Auth URL: {data.get('authorization_url')}")
+            response_data = paystack_response.get("data", {})
+            logger.info(f"Paystack initialization successful for reference {transaction_reference}. Auth URL: {response_data.get('authorization_url')}")
             
             return success_response(
                 status_code=200,
                 message="Deposit initialized",
                 data={
-                    "reference": reference,
-                    "authorization_url": data.get("authorization_url")
+                    "reference": transaction_reference,
+                    "authorization_url": response_data.get("authorization_url"),
+                    "wallet_number": user_wallet.wallet_number
                 }
             )
         
         except Exception as e:
-            logger.exception(f"Exception during Paystack initialization for reference {reference}")
+            logger.exception(f"Exception during Paystack initialization for reference {transaction_reference}")
             # Mark transaction as failed
-            transaction.status = TransactionStatus.FAILED
-            transaction.update(db)
+            deposit_transaction.status = TransactionStatus.FAILED
+            deposit_transaction.update(db)
             return fail_response(
                 status_code=500,
                 message="Payment initialization failed",
@@ -127,8 +128,8 @@ async def paystack_webhook(
     logger.info("Paystack webhook received.")
     try:
         # Get signature from header
-        signature = request.headers.get("x-paystack-signature")
-        if not signature:
+        signature_header = request.headers.get("x-paystack-signature")
+        if not signature_header:
             logger.error("Webhook failed: Missing x-paystack-signature header.")
             return fail_response(
                 status_code=400,
@@ -137,10 +138,10 @@ async def paystack_webhook(
             )
         
         # Get raw body
-        body = await request.body()
+        webhook_body = await request.body()
         
         # Verify signature
-        if not verify_paystack_signature(body, signature):
+        if not verify_paystack_signature(webhook_body, signature_header):
             logger.error("Webhook failed: Invalid signature.")
             return fail_response(
                 status_code=401,
@@ -150,8 +151,8 @@ async def paystack_webhook(
         
         # Parse payload
         try:
-            payload = await request.json()
-            logger.debug(f"Webhook payload: {payload}")
+            webhook_payload = await request.json()
+            logger.debug(f"Webhook payload: {webhook_payload}")
         except Exception as e:
             logger.error(f"Webhook failed: Invalid JSON payload. Error: {e}")
             return fail_response(
@@ -165,14 +166,14 @@ async def paystack_webhook(
         try:
             webhook_log = Webhook(
                 provider="paystack",
-                payload=payload,
+                payload=webhook_payload,
                 headers=dict(request.headers),
                 processed=False
             )
             webhook_log.insert(db, commit=False)
-            logger.info(f"Webhook event logged: {payload.get('event')}")
+            logger.info(f"Webhook event logged: {webhook_payload.get('event')}")
         except Exception as e:
-            logger.exception(f"Failed to log webhook event: {payload.get('event')}. Error: {e}")
+            logger.exception(f"Failed to log webhook event: {webhook_payload.get('event')}. Error: {e}")
             # Attempt to commit even if logging failed, processing may still be necessary
             # For simplicity in this example, we return fail, but in production, may need a retry mechanism.
             return fail_response(
@@ -183,70 +184,70 @@ async def paystack_webhook(
         
         # Process event
         try:
-            event = payload.get("event")
-            data = payload.get("data", {})
+            event_type = webhook_payload.get("event")
+            event_data = webhook_payload.get("data", {})
             
-            if event == "charge.success":
-                reference = data.get("reference")
-                amount = data.get("amount")  # Amount in kobo
-                status = data.get("status")
-                logger.info(f"Processing charge.success for reference: {reference}, status: {status}")
+            if event_type == "charge.success":
+                transaction_reference = event_data.get("reference")
+                transaction_amount = event_data.get("amount")  # Amount in kobo
+                transaction_status = event_data.get("status")
+                logger.info(f"Processing charge.success for reference: {transaction_reference}, status: {transaction_status}")
                 
-                if not reference:
+                if not transaction_reference:
                     logger.warning("charge.success event missing reference. Ignoring.")
                     webhook_log.processed = True
                     db.commit()
                     return {"status": True}
                 
                 # Find transaction
-                transaction = Transaction.fetch_one(db, reference=reference)
+                found_transaction = Transaction.fetch_one(db, reference=transaction_reference)
                 
-                if not transaction:
-                    logger.warning(f"charge.success: Transaction not found for reference: {reference}. Ignoring.")
+                if not found_transaction:
+                    logger.warning(f"charge.success: Transaction not found for reference: {transaction_reference}. Ignoring.")
                     webhook_log.processed = True
                     db.commit()
                     return {"status": True}
                 
                 # Idempotency check - already processed
-                if transaction.status == TransactionStatus.SUCCESS:
-                    logger.info(f"Transaction {reference} already processed (SUCCESS). Idempotency check passed.")
+                if found_transaction.status == TransactionStatus.SUCCESS:
+                    logger.info(f"Transaction {transaction_reference} already processed (SUCCESS). Idempotency check passed.")
                     webhook_log.processed = True
                     db.commit()
                     return {"status": True}
                 
                 # Update transaction
-                if status == "success":
-                    logger.info(f"Updating transaction {reference} to SUCCESS and crediting wallet.")
-                    transaction.status = TransactionStatus.SUCCESS
-                    transaction.extra = data
+                if transaction_status == "success":
+                    logger.info(f"Updating transaction {transaction_reference} to SUCCESS and crediting wallet.")
+                    found_transaction.status = TransactionStatus.SUCCESS
+                    found_transaction.extra = event_data
                     
                     # Credit wallet
-                    wallet = Wallet.fetch_one(db, id=transaction.wallet_id)
-                    if wallet:
-                        wallet.credit(amount)
-                        wallet.update(db, commit=False)
-                        logger.info(f"Wallet {wallet.id} credited with {amount} kobo.")
+                    transaction_wallet = Wallet.fetch_one(db, id=found_transaction.wallet_id)
+                    if transaction_wallet:
+                        transaction_wallet.credit(transaction_amount)
+                        transaction_wallet.update(db, commit=False)
+                        logger.info(f"Wallet {transaction_wallet.id} credited with {transaction_amount} kobo.")
                     else:
-                        logger.error(f"Wallet not found for transaction {reference}. Could not credit.")
+                        logger.error(f"Wallet not found for transaction {transaction_reference}. Could not credit.")
                     
-                    transaction.update(db, commit=False)
-                elif status == "failed":
-                    logger.warning(f"Transaction {reference} failed according to Paystack webhook.")
-                    transaction.status = TransactionStatus.FAILED
-                    transaction.update(db, commit=False)
+                    found_transaction.update(db, commit=False)
+                elif transaction_status == "failed":
+                    logger.warning(f"Transaction {transaction_reference} failed according to Paystack webhook.")
+                    found_transaction.status = TransactionStatus.FAILED
+                    found_transaction.update(db, commit=False)
                 else:
-                    logger.info(f"Webhook status for {reference} is '{status}', not 'success'. Transaction status remains: {transaction.status.value}")
+                    logger.info(f"Webhook status for {transaction_reference} is '{transaction_status}', not 'success'. Transaction status remains: {found_transaction.status.value}")
                     
                 webhook_log.processed = True
                 db.commit()
-                logger.info(f"Webhook processing completed and committed for reference {reference}.")
+                logger.info(f"Webhook processing completed and committed for reference {transaction_reference}.")
             else:
-                logger.info(f"Webhook event type '{event}' received. Not charge.success, ignoring for now.")
+                logger.info(f"Webhook event type '{event_type}' received. Not charge.success, ignoring for now.")
                 webhook_log.processed = True
                 db.commit()
         
         except Exception as e:
-            logger.exception(f"Exception during webhook event processing for event: {payload.get('event')}")
+            logger.exception(f"Exception during webhook event processing for event: {webhook_payload.get('event')}")
             if webhook_log:
                 webhook_log.processed = False
             db.commit() # Commit the webhook log even if processing failed
@@ -276,9 +277,9 @@ async def check_deposit_status(
     """Check deposit transaction status (does not credit wallet)"""
     logger.info(f"Status check requested for reference: {reference} by user {user.id}")
     try:
-        transaction = Transaction.fetch_one(db, reference=reference, user_id=user.id)
+        status_transaction = Transaction.fetch_one(db, reference=reference, user_id=user.id)
         
-        if not transaction:
+        if not status_transaction:
             logger.warning(f"Status check failed: Transaction not found for reference: {reference}, user: {user.id}")
             return fail_response(
                 status_code=404,
@@ -286,20 +287,24 @@ async def check_deposit_status(
                 context={"reference": reference}
             )
         
+        # Fetch wallet for this transaction (to return wallet_number)
+        transaction_wallet = Wallet.fetch_one(db, id=status_transaction.wallet_id)
+
         # Optionally verify with Paystack
         try:
             paystack_data = await verify_transaction(reference)
             paystack_status = paystack_data.get("data", {}).get("status")
-            logger.info(f"Paystack verification for {reference}: Paystack status is {paystack_status}, internal status is {transaction.status.value}")
+            logger.info(f"Paystack verification for {reference}: Paystack status is {paystack_status}, internal status is {status_transaction.status.value}")
             
             return success_response(
                 status_code=200,
                 message="Transaction status retrieved",
                 data={
                     "reference": reference,
-                    "status": transaction.status.value,
-                    "amount": transaction.amount,
-                    "paystack_status": paystack_status
+                    "status": status_transaction.status.value,
+                    "amount": status_transaction.amount,
+                    "paystack_status": paystack_status,
+                    "wallet_number": transaction_wallet.wallet_number if transaction_wallet else None
                 }
             )
         except Exception as e:
@@ -309,8 +314,9 @@ async def check_deposit_status(
                 message="Transaction status retrieved (Paystack verification failed)",
                 data={
                     "reference": reference,
-                    "status": transaction.status.value,
-                    "amount": transaction.amount
+                    "status": status_transaction.status.value,
+                    "amount": status_transaction.amount,
+                    "wallet_number": transaction_wallet.wallet_number if transaction_wallet else None
                 }
             )
     
@@ -331,9 +337,9 @@ async def get_wallet_balance(
     """Get wallet balance"""
     logger.info(f"Balance request for user {user.id}")
     try:
-        wallet = Wallet.fetch_one(db, user_id=user.id)
+        balance_wallet = Wallet.fetch_one(db, user_id=user.id)
         
-        if not wallet:
+        if not balance_wallet:
             logger.error(f"Balance request failed: Wallet not found for user_id: {user.id}")
             return fail_response(
                 status_code=404,
@@ -341,13 +347,14 @@ async def get_wallet_balance(
                 context={"user_id": str(user.id)}
             )
         
-        logger.info(f"Balance retrieved for wallet {wallet.wallet_number}: {wallet.balance}")
+        logger.info(f"Balance retrieved for wallet {balance_wallet.wallet_number}: {balance_wallet.balance}")
         return success_response(
             status_code=200,
             message="Balance retrieved",
             data={
-                "balance": wallet.balance,
-                "currency": wallet.currency
+                "balance": balance_wallet.balance,
+                "currency": balance_wallet.currency,
+                "wallet_number": balance_wallet.wallet_number
             }
         )
     
@@ -418,12 +425,12 @@ async def transfer_funds(
             )
         
         # Generate unique reference
-        reference = f"txf_{uuid.uuid4().hex[:16]}"
-        logger.debug(f"Generated reference {reference} for transfer from {sender_wallet.wallet_number} to {recipient_wallet.wallet_number}")
+        transfer_reference = f"txf_{uuid.uuid4().hex[:16]}"
+        logger.debug(f"Generated reference {transfer_reference} for transfer from {sender_wallet.wallet_number} to {recipient_wallet.wallet_number}")
         
         # Create debit transaction for sender
-        debit_tx = Transaction(
-            reference=f"{reference}_debit",
+        debit_transaction = Transaction(
+            reference=f"{transfer_reference}_debit",
             wallet_id=sender_wallet.id,
             user_id=user.id,
             type=TransactionType.TRANSFER,
@@ -434,8 +441,8 @@ async def transfer_funds(
         )
         
         # Create credit transaction for recipient
-        credit_tx = Transaction(
-            reference=f"{reference}_credit",
+        credit_transaction = Transaction(
+            reference=f"{transfer_reference}_credit",
             wallet_id=recipient_wallet.id,
             user_id=recipient_wallet.user_id,
             type=TransactionType.TRANSFER,
@@ -446,10 +453,10 @@ async def transfer_funds(
         )
         
         # Link transactions (IDs will be available after first insert/session flush)
-        debit_tx.insert(db, commit=False)
+        debit_transaction.insert(db, commit=False)
         db.flush() # Ensure debit_tx has an ID
-        credit_tx.related_tx_id = debit_tx.id
-        debit_tx.related_tx_id = credit_tx.id
+        credit_transaction.related_tx_id = debit_transaction.id
+        debit_transaction.related_tx_id = credit_transaction.id
         
         # Update balances
         sender_wallet.debit(request.amount)
@@ -458,7 +465,7 @@ async def transfer_funds(
         logger.info(f"Transfer successful: Debiting {request.amount} from {sender_wallet.wallet_number} and crediting {recipient_wallet.wallet_number}")
         
         # Commit all changes atomically
-        credit_tx.insert(db, commit=False) # Inserting credit tx after updating its related_tx_id
+        credit_transaction.insert(db, commit=False) # Inserting credit tx after updating its related_tx_id
         sender_wallet.update(db, commit=False)
         recipient_wallet.update(db, commit=False)
         db.commit()
@@ -467,9 +474,11 @@ async def transfer_funds(
             status_code=200,
             message="Transfer completed",
             data={
-                "reference": reference,
+                "reference": transfer_reference,
                 "amount": request.amount,
-                "recipient": request.wallet_number
+                "recipient": request.wallet_number,
+                "sender_wallet": sender_wallet.wallet_number,
+                "recipient_wallet": recipient_wallet.wallet_number
             }
         )
     
@@ -520,7 +529,10 @@ async def get_transaction_history(
         return success_response(
             status_code=200,
             message="Transactions retrieved",
-            data={"transactions": transaction_list}
+            data={
+                "wallet_number": wallet.wallet_number,
+                "transactions": transaction_list
+            }
         )
     
     except Exception as e:

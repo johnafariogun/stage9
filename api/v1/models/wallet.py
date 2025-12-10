@@ -28,12 +28,11 @@ class Wallet(BaseModel):
 
     wallet_number: Mapped[str] = mapped_column(String(32), unique=True, nullable=False, default=generate_wallet_number)
 
-    # Balance stored in smallest currency unit (e.g., kobo). Use BIGINT for safety.
     balance: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
 
     currency: Mapped[str] = mapped_column(String(8), nullable=False, default="NGN")
 
-    # relationships
+
     user = relationship("User", back_populates="wallet")
     transactions = relationship("Transaction", back_populates="wallet", cascade="all, delete-orphan")
 
