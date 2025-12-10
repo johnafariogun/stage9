@@ -3,6 +3,7 @@ import httpx
 import hmac
 import hashlib
 from dotenv import load_dotenv
+from api.utils.logger import logger
 
 load_dotenv()
 
@@ -24,10 +25,16 @@ async def initialize_transaction(email: str, amount: int, reference:str) -> dict
         "reference": reference
     }
 
-    async with httpx.AsyncClient() as client:
-        response = await client.post(url, json=payload, headers=headers)
-        response.raise_for_status()
-        return response.json()
+    try:
+        async with httpx.AsyncClient() as client:
+            logger.info("Initializing Paystack transaction for email: %s, amount: %s, reference: %s", email, amount, reference)
+            response = await client.post(url, json=payload, headers=headers)
+            response.raise_for_status()
+            logger.info("Paystack transaction initialized successfully: %s", reference)
+            return response.json()
+    except httpx.HTTPError as e:
+        logger.exception("Failed to initialize Paystack transaction for reference: %s", reference)
+        raise
     
 
 async def verify_transaction(reference: str) -> dict:
@@ -37,10 +44,16 @@ async def verify_transaction(reference: str) -> dict:
         "Authorization": f"Bearer {PAYSTACK_SECRET_KEY}"
     }
 
-    async with httpx.AsyncClient() as client:
-        response = await client.get(url, headers=headers)
-        response.raise_for_status()
-        return response.json()
+    try:
+        async with httpx.AsyncClient() as client:
+            logger.info("Verifying Paystack transaction: %s", reference)
+            response = await client.get(url, headers=headers)
+            response.raise_for_status()
+            logger.info("Paystack transaction verified: %s", reference)
+            return response.json()
+    except httpx.HTTPError as e:
+        logger.exception("Failed to verify Paystack transaction: %s", reference)
+        raise
     
 def verify_paystack_signature(payload: bytes, signature: str) -> bool:
     """Verify Paystack webhook signature"""
@@ -50,4 +63,9 @@ def verify_paystack_signature(payload: bytes, signature: str) -> bool:
         hashlib.sha512
     ).hexdigest()
 
-    return hmac.compare_digest(computed_signature, signature)
+    is_valid = hmac.compare_digest(computed_signature, signature)
+    if not is_valid:
+        logger.warning("Paystack webhook signature verification failed")
+    else:
+        logger.info("Paystack webhook signature verified successfully")
+    return is_valid
