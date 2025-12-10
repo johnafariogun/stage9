@@ -3,13 +3,31 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from api.v1.routes import auth_route, api_key_route, wallet_route
 
+from fastapi import FastAPI
+from fastapi.security import HTTPBearer, APIKeyHeader
 app = FastAPI(
-    title="Wallet",
-    description="It's a wallet",
-    version="1.0.0"
+    title="Wallet API",
+    description="API for wallet and key management.",
+    openapi_extra={
+        "security": [
+            {"BearerAuth": []},
+            {"APIKeyAuth": []},
+        ]
+    }
 )
 
-# CORS middleware
+
+bearer_scheme = HTTPBearer(
+    scheme_name="BearerAuth",
+    description="JWT token passed in the Authorization header as 'Bearer <token>'"
+)
+
+api_key_scheme = APIKeyHeader(
+    name="X-Api-Key",
+    description="API Key passed in the custom X-Api-Key header"
+)
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -18,7 +36,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include routers
 app.include_router(auth_route.router)
 app.include_router(api_key_route.router)
 app.include_router(wallet_route.router)

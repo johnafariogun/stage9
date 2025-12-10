@@ -3,10 +3,12 @@ import hashlib
 
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+from .logger import logger
 
 
 def parse_expiry_to_datetime(expiry: str) -> Optional[datetime]:
     """Convert expiry string (1H, 1D, 1M, 1Y) to datetime"""
+    
     expiry = expiry.strip().upper()
 
     mapping = {
@@ -29,9 +31,11 @@ def generate_api_key() -> str:
 
 def hash_api_key(api_key: str) -> str:
     """Hash API key for secure storage using SHA256"""
+    logger.info("hashing api key")
     return hashlib.sha256(api_key.encode()).hexdigest()
 
 
 def verify_api_key(plain_key: str, hashed_key: str) -> bool:
     """Verify API key against hashed version"""
+    logger.info("parsing api key")
     return hashlib.sha256(plain_key.encode()).hexdigest() == hashed_key

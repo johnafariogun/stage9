@@ -3,7 +3,7 @@ import httpx
 import hmac
 import hashlib
 from dotenv import load_dotenv
-from api.utils.logger import logger
+from .logger import logger
 
 load_dotenv()
 

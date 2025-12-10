@@ -5,9 +5,8 @@ from contextvars import ContextVar
 from typing import Optional
 
 DEFAULT_LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
-SERVICE_NAME = "Mum_mentor_ai"
+SERVICE_NAME = "Wallet Service"
 
-# Context variable for correlation ID (for distributed tracing)
 correlation_id_context: ContextVar[Optional[str]] = ContextVar('correlation_id', default=None)
 
 

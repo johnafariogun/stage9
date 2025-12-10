@@ -2,7 +2,7 @@ import uuid
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
-from typing import List
+from typing import List, Tuple, Optional # Added Tuple, Optional for correct type hinting
 
 from api.db.database import get_db
 from api.v1.models.api_key import APIKey
@@ -29,15 +29,19 @@ class RolloverAPIKeyRequest(BaseModel):
 @router.post("/create")
 async def create_api_key(
     request: CreateAPIKeyRequest,
-    auth_data: tuple = Depends(get_authenticated_user),
+
+    auth_data: Tuple[User, Optional[APIKey]] = Depends(get_authenticated_user), 
     db: Session = Depends(get_db)
 ):
     """Create new API key for authenticated user"""
+    user, api_key_used = auth_data
+    logger.info("Create API key request received for user: %s", user.id)
+
+    
     try:
-        user, _ = auth_data
-        
         expires_at = parse_expiry_to_datetime(request.expiry)
         if not expires_at:
+            logger.warning("Invalid expiry format provided by user: %s", user.id)
             return fail_response(
                 status_code=400,
                 message="Invalid expiry format",
@@ -50,6 +54,7 @@ async def create_api_key(
         ]
         
         if len(active_keys) >= 5:
+            logger.warning("Max active API keys reached for user: %s", user.id)
             return fail_response(
                 status_code=400,
                 message="Maximum 5 active API keys allowed per user",
@@ -59,7 +64,7 @@ async def create_api_key(
         valid_permissions = ["deposit", "transfer", "read"]
         for perm in request.permissions:
             if perm not in valid_permissions:
-                logger.warning("Invalid permission requested: %s", perm)
+                logger.warning("Invalid permission requested: %s for user: %s", perm, user.id)
                 return fail_response(
                     status_code=400,
                     message=f"Invalid permission: {perm}",
@@ -78,6 +83,7 @@ async def create_api_key(
             revoked=False
         )
         api_key.insert(db)
+        logger.info("API key created successfully for user: %s", user.id)
         
         return success_response(
             status_code=201,
@@ -88,7 +94,7 @@ async def create_api_key(
             }
         )
     except Exception as e:
-        logger.exception("Failed to create API key for user")
+        logger.exception("Failed to create API key for user: %s", user.id)
         return fail_response(
             status_code=500,
             message="Failed to create API key",
@@ -99,17 +105,19 @@ async def create_api_key(
 @router.post("/rollover")
 async def rollover_api_key(
     request: RolloverAPIKeyRequest,
-    auth_data: tuple = Depends(get_authenticated_user),
+    # Use the correct return type for the dependency: (User, Optional[APIKey])
+    auth_data: Tuple[User, Optional[APIKey]] = Depends(get_authenticated_user),
     db: Session = Depends(get_db)
 ):
     """Rollover an expired API key with new expiry"""
+    user, api_key_used = auth_data
+    logger.info("Rollover API key request received for user: %s, key_id: %s", user.id, request.expired_key_id)
+
     try:
-        user, _ = auth_data
-        
         try:
             key_id = uuid.UUID(request.expired_key_id)
         except ValueError:
-            logger.warning("Invalid UUID provided for rollover: %s", request.expired_key_id)
+            logger.warning("Invalid UUID provided for rollover: %s by user: %s", request.expired_key_id, user.id)
             return fail_response(
                 status_code=400,
                 message="Invalid key ID format",
@@ -119,7 +127,7 @@ async def rollover_api_key(
         old_key = APIKey.fetch_one(db, id=key_id, user_id=user.id)
         
         if not old_key:
-            logger.info("API key not found for rollover: %s", str(key_id))
+            logger.info("API key not found for rollover: %s, user: %s", str(key_id), user.id)
             return fail_response(
                 status_code=404,
                 message="API key not found",
@@ -127,6 +135,7 @@ async def rollover_api_key(
             )
         
         if old_key.is_active():
+            logger.warning("Cannot rollover active key: %s, user: %s", str(key_id), user.id)
             return fail_response(
                 status_code=400,
                 message="Cannot rollover active key. Key must be expired.",
@@ -135,19 +144,20 @@ async def rollover_api_key(
         
         new_expires_at = parse_expiry_to_datetime(request.expiry)
         if not new_expires_at:
+            logger.warning("Invalid expiry format for rollover: %s, user: %s", request.expiry, user.id)
             return fail_response(
                 status_code=400,
                 message="Invalid expiry format",
                 context={"valid_formats": "1H, 1D, 1M, or 1Y"}
             )
         
-        # Check active key limit
         active_keys = [
             key for key in APIKey.fetch_all(db, user_id=user.id)
             if key.is_active()
         ]
         
         if len(active_keys) >= 5:
+            logger.warning("Max active API keys reached during rollover attempt for user: %s", user.id)
             return fail_response(
                 status_code=400,
                 message="Maximum 5 active API keys allowed per user",
@@ -166,6 +176,7 @@ async def rollover_api_key(
             revoked=False
         )
         new_key.insert(db)
+        logger.info("API key %s rolled over successfully to new key for user: %s", str(key_id), user.id)
         
         return success_response(
             status_code=201,
@@ -177,7 +188,7 @@ async def rollover_api_key(
             }
         )
     except Exception as e:
-        logger.exception("Failed to rollover API key for user")
+        logger.exception("Failed to rollover API key for user: %s", user.id)
         return fail_response(
             status_code=500,
             message="Failed to rollover API key",

@@ -87,7 +87,6 @@ async def google_callback(
                     context={"error": str(e)}
                 )
         
-            # Fetch user info
             try:
                 headers = {
                     "Authorization": f"Bearer {access_token}"
@@ -103,7 +102,6 @@ async def google_callback(
                     context={"error": str(e)}
                 )
         
-        # Check if user exists, else create
         email = user_info.get("email")
         google_id = user_info.get("id")
         full_name = user_info.get("name", email)
@@ -119,7 +117,6 @@ async def google_callback(
             user = User.fetch_one(db, google_id=google_id)
 
             if not user:
-                # Create user
                 user = User(
                     email=email,
                     full_name=full_name,
@@ -127,7 +124,6 @@ async def google_callback(
                 )
                 user.insert(db)
 
-                # Create associated wallet
                 wallet = Wallet(user_id=user.id)
                 wallet.insert(db)
         except Exception as e:
@@ -138,7 +134,6 @@ async def google_callback(
                 context={"error": str(e)}
             )
 
-        # Create JWT token
         try:
             if not user.email:
                 return fail_response(

@@ -17,7 +17,6 @@ class User(BaseModel):
     email: Mapped[Optional[str]] = mapped_column(String(150), unique=True, nullable=True)
     google_id: Mapped[Optional[str]] = mapped_column(String(200), unique=True, nullable=True)
 
-    # relationships
     wallet = relationship("Wallet", back_populates="user", uselist=False)
     api_keys = relationship("APIKey", back_populates="user", cascade="all, delete-orphan")
     transactions = relationship("Transaction", back_populates="user", cascade="all, delete-orphan")

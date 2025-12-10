@@ -12,7 +12,7 @@ def success_response(status_code: int, message: str,
         "status": "success",
         "status_code": status_code,
         "message": message,
-        "data": data or {},  # Ensure data is always a dictionary
+        "data": data or {},
     }
 
     return JSONResponse(

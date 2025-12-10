@@ -1,6 +1,6 @@
 from fastapi import Header, HTTPException, Depends
 from sqlalchemy.orm import Session
-from typing import Optional
+from typing import Optional, Tuple
 import uuid
 import os
 import jwt
@@ -8,8 +8,8 @@ from datetime import datetime, timedelta, timezone
 
 
 from api.db.database import get_db
-from api.utils.api_key import verify_api_key
-from api.utils.logger import logger
+from .api_key import verify_api_key
+from .logger import logger
 from api.v1.models.user import User
 from api.v1.models.api_key import APIKey
 
@@ -31,6 +31,7 @@ def create_jwt_token(user_id: str, email: str) -> str:
         "iat": datetime.now(timezone.utc),
         "exp": datetime.now(timezone.utc) + timedelta(minutes=EXPIRATION_MINUTES),
     }
+    logger.info("Creating JWT token for user_id: %s", user_id)
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 
@@ -38,7 +39,7 @@ def verify_jwt_token(token: str) -> Optional[dict]:
     """verify and decode JWT token"""
     try :
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        logger.info("JWT token verified successfully")
+        logger.info("JWT token verified successfully. User sub: %s", payload.get("sub"))
         return payload
     except jwt.ExpiredSignatureError:
         logger.warning("JWT token has expired")
@@ -53,6 +54,7 @@ async def get_current_user_from_jwt(
         db: Session = Depends(get_db)
 ) -> Optional[User]:
     """Extract user from JWT token"""
+    logger.debug("Attempting JWT authentication...")
     if not authorization or not authorization.startswith("Bearer "):
         logger.debug("Missing or invalid Bearer token in authorization header")
         return None
@@ -61,25 +63,35 @@ async def get_current_user_from_jwt(
     payload = verify_jwt_token(token)
     
     if not payload:
-        logger.warning("JWT token verification failed")
+        logger.warning("JWT token verification failed or token expired.")
         return None
     
-    user_id = payload.get("sub")
-    if not user_id:
-        logger.warning("No user ID found in JWT token")
+    user_id_str = payload.get("sub")
+    if not user_id_str:
+        logger.warning("No user ID ('sub') found in JWT token payload.")
         return None
     
-    user = User.fetch_one(db, id=uuid.UUID(user_id))
+    try:
+        user_id = uuid.UUID(user_id_str)
+    except ValueError:
+        logger.error("Invalid UUID format for user ID in JWT token: %s", user_id_str)
+        return None
+        
+    user = User.fetch_one(db, id=user_id)
     if user:
         logger.info("User authenticated via JWT: %s", user_id)
+    else:
+        logger.warning("User not found in DB for ID from JWT: %s", user_id)
+        
     return user
 
 
 async def get_current_user_from_api_key(
         x_api_key: Optional[str] = Header(None),
         db: Session = Depends(get_db)
-) -> Optional[tuple]:
+) -> Optional[Tuple[User, APIKey]]:
     """Extract user and API key from x-api-key header"""
+    logger.debug("Attempting API Key authentication...")
     if not x_api_key:
         logger.debug("No API key provided in x-api-key header")
         return None
@@ -88,6 +100,7 @@ async def get_current_user_from_api_key(
 
     for api_key in api_keys:
         if verify_api_key(x_api_key, api_key.hashed_key):
+            logger.debug("API Key hash matched: %s", api_key.id)
             if not api_key.is_active():
                 logger.warning("API key is revoked or expired: %s", api_key.id)
                 raise HTTPException(status_code=401, detail="API key is revoked or expired")
@@ -96,50 +109,50 @@ async def get_current_user_from_api_key(
             if not user:
                 logger.error("User not found for API key: %s", api_key.id)
                 raise HTTPException(status_code=401, detail="User not found for the provided API key")
+            
             logger.info("User authenticated via API key: %s", api_key.id)
             return (user, api_key)
         
-    logger.warning("Invalid API key provided")
+    logger.warning("Invalid API key provided (hash not matched)")
     return None
 
 
 async def get_authenticated_user(
     jwt_user: Optional[User] = Depends(get_current_user_from_jwt),
-    api_key_data: Optional[tuple] = Depends(get_current_user_from_api_key)
-) -> tuple[User, Optional[APIKey]]:
+    api_key_data: Optional[Tuple[User, APIKey]] = Depends(get_current_user_from_api_key)
+) -> Tuple[User, Optional[APIKey]]:
     """
     Get authenticated user from either JWT or API key.
     Returns (User, APIKey or None)
     """
     if jwt_user:
+        logger.debug("Authentication successful via JWT")
         return (jwt_user, None)
     
     if api_key_data:
+        logger.debug("Authentication successful via API Key")
         return api_key_data
     
+    logger.error("Authentication failed: Neither JWT nor API Key provided/valid.")
     raise HTTPException(status_code=401, detail="Authentication required")
 
 
 def require_permission(permission: str):
     """Dependency to check API key permission"""
     async def permission_checker(
-        auth_data: tuple = Depends(get_authenticated_user)
-        ):
+        auth_data: Tuple[User, Optional[APIKey]] = Depends(get_authenticated_user)
+        ) -> User:
         user, api_key = auth_data
 
-        #JWT users have all permissions
         if api_key is None:
             logger.info("JWT user accessing resource with permission: %s", permission)
             return user
         
-        #api key users need permission check
         if permission not in api_key.permissions:
             logger.warning("API key %s denied access due to missing permission: %s", api_key.id, permission)
             raise HTTPException(status_code=403, detail="Insufficient API key permissions")
+        
         logger.info("API key %s granted access with permission: %s", api_key.id, permission)
         return user
-    return permission_checker
-
         
-
-    
+    return permission_checker

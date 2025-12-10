@@ -1,109 +1,93 @@
 # Wallet Service API
 
-A backend wallet service with Paystack payment integration, JWT authentication, and API key management for service-to-service access.
+A production-ready backend wallet service built with FastAPI, PostgreSQL, and Paystack integration. Provides secure payment processing, transaction management, and dual authentication (JWT + API Keys).
 
-## Features
-
-- Google OAuth 2.0 authentication with JWT tokens
-- Wallet creation and balance management
-- Paystack deposit integration with webhook verification
-- Wallet-to-wallet transfers (atomic transactions)
-- Transaction history tracking
-- API key system for programmatic access
-- Permission-based access control (deposit, transfer, read)
-- API key expiration and rollover
-- Maximum 5 active API keys per user
-- Idempotent webhook processing
-- Dual authentication: JWT or API keys
-
-## Tech Stack
-
-- **Framework:** FastAPI
-- **Database:** PostgreSQL with SQLAlchemy ORM
-- **Authentication:** JWT (Google OAuth), API Keys (SHA256 hashing)
-- **Payment Provider:** Paystack
-- **Migrations:** Alembic
-
-## Installation
+## 🚀 Quick Start
 
 ### Prerequisites
 - Python 3.9+
 - PostgreSQL 12+
-- Paystack account (test keys)
-- Google OAuth credentials
+- Paystack account (for payments)
+- Google OAuth 2.0 credentials
 
-### Setup
+### Installation
 
-1. **Clone repository:**
 ```bash
+# Clone repository
 git clone https://github.com/idyweb/Wallet_Service_with_Paystack
-cd wallet_service_with_paystack
-```
+cd Wallet_Service_with_Paystack
 
-2. **Create virtual environment:**
-```bash
+# Create virtual environment
 python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-```
+source venv/bin/activate  # Windows: venv\Scripts\activate
 
-3. **Install dependencies:**
-```bash
+# Install dependencies
 pip install -r requirements.txt
+
+# Setup environment variables
+cp .env .env.local
+# Edit .env.local with your credentials
 ```
 
-4. **Configure environment variables:**
-```bash
-cp .env.example .env
-# Edit .env with your credentials
-```
+### Environment Variables
 
-Required environment variables:
 ```env
-DATABASE_URL=postgresql://user:password@localhost:5432/wallet_db
+# Database
+DATABASE_URL=postgresql://user:password@localhost:5432/wallet_dev
+ENVIRONMENT=development
+
+# Google OAuth
 GOOGLE_CLIENT_ID=your_google_client_id
 GOOGLE_CLIENT_SECRET=your_google_client_secret
 GOOGLE_REDIRECT_URI=http://localhost:8000/auth/google/callback
-JWT_SECRET_KEY=your-secret-key-min-32-characters
+
+# JWT
+JWT_SECRET_KEY=your-secret-key-at-least-32-characters
+JWT_ALGORITHM=HS256
+JWT_EXPIRATION_MINUTES=10080
+
+# Paystack
 PAYSTACK_SECRET_KEY=sk_test_your_paystack_secret_key
+
+# Logging
+LOG_LEVEL=INFO
 ```
 
-5. **Run database migrations:**
+### Run Server
+
 ```bash
-alembic revision --autogenerate -m "Initial migration"
+# Apply migrations
 alembic upgrade head
-```
 
-6. **Start server:**
-```bash
+# Start development server
 uvicorn main:app --reload --port 8000
 ```
 
-Server will be available at: `http://localhost:8000`
+Server runs at: **http://localhost:8000**
 
-## API Documentation
+API Docs: **http://localhost:8000/docs**
 
-Interactive API docs available at:
-- Swagger UI: `http://localhost:8000/docs`
-- ReDoc: `http://localhost:8000/redoc`
+---
 
-## Authentication
+## 🔐 Authentication
 
-### Method 1: JWT (For Users)
+### Method 1: JWT (User Authentication)
 
-**Step 1:** Get Google authorization URL
+**Step 1: Get OAuth URL**
 ```bash
-GET /auth/google
+curl http://localhost:8000/auth/google
 ```
 
-**Step 2:** User completes OAuth flow, receives JWT
+**Step 2: Complete OAuth flow in browser, get JWT**
 ```bash
-GET /auth/google/callback?code=...
+GET /auth/google/callback?code=<auth_code>
 ```
 
-Response:
+**Response:**
 ```json
 {
   "status": "success",
+  "message": "Authentication successful",
   "data": {
     "jwt_token": "eyJhbGc...",
     "user": {
@@ -115,23 +99,22 @@ Response:
 }
 ```
 
-**Step 3:** Use JWT in requests
+**Step 3: Use JWT in requests**
 ```bash
 Authorization: Bearer <jwt_token>
 ```
 
-### Method 2: API Keys (For Services)
+### Method 2: API Keys (Service-to-Service)
 
 **Create API Key:**
 ```bash
 POST /keys/create
 Authorization: Bearer <jwt_token>
-Content-Type: application/json
 
 {
-  "name": "payment-service",
+  "name": "backend-service",
   "permissions": ["deposit", "transfer", "read"],
-  "expiry": "1D"
+  "expiry": "1M"
 }
 ```
 
@@ -140,25 +123,35 @@ Content-Type: application/json
 x-api-key: sk_live_xxxxx
 ```
 
-## API Endpoints
+---
 
-### Authentication
-- `GET /auth/google` - Initiate Google OAuth
-- `GET /auth/google/callback` - OAuth callback (returns JWT)
+## 📡 API Endpoints
 
-### API Key Management
-- `POST /keys/create` - Create new API key (requires JWT)
-- `POST /keys/rollover` - Rollover expired key (requires JWT)
+### Authentication (`/auth`)
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/auth/google` | Initiate Google OAuth flow |
+| GET | `/auth/google/callback` | OAuth callback (returns JWT) |
 
-### Wallet Operations
-- `POST /wallet/deposit` - Initialize Paystack deposit
-- `POST /wallet/paystack/webhook` - Paystack webhook handler
-- `GET /wallet/deposit/{reference}/status` - Check deposit status
-- `GET /wallet/balance` - Get wallet balance
-- `POST /wallet/transfer` - Transfer funds to another wallet
-- `GET /wallet/transactions` - Get transaction history
+### API Keys (`/keys`)
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/keys/create` | Create new API key |
+| POST | `/keys/rollover` | Rollover expired API key |
 
-## Usage Examples
+### Wallet (`/wallet`)
+| Method | Endpoint | Description | Auth |
+|--------|----------|-------------|------|
+| POST | `/wallet/deposit` | Initialize Paystack deposit | JWT/Key (deposit) |
+| GET | `/wallet/balance` | Get wallet balance | JWT/Key (read) |
+| POST | `/wallet/transfer` | Transfer funds between wallets | JWT/Key (transfer) |
+| GET | `/wallet/transactions` | Get transaction history | JWT/Key (read) |
+| GET | `/wallet/deposit/{ref}/status` | Check deposit status | JWT/Key (read) |
+| POST | `/wallet/paystack/webhook` | Paystack webhook handler | Signature |
+
+---
+
+## 💰 Usage Examples
 
 ### 1. Deposit Money
 
@@ -168,36 +161,38 @@ Authorization: Bearer <jwt_token>
 Content-Type: application/json
 
 {
-  "amount": 5000
+  "amount": 50000
 }
 ```
 
-Response:
+**Response:**
 ```json
 {
   "status": "success",
+  "message": "Deposit initialized",
   "data": {
-    "reference": "dep_abc123",
+    "reference": "dep_a1b2c3d4e5f6",
     "authorization_url": "https://checkout.paystack.com/xyz"
   }
 }
 ```
 
-Complete payment at the `authorization_url`. Wallet will be credited automatically via webhook.
+User completes payment at `authorization_url`. Wallet credits automatically via webhook.
 
-### 2. Check Balance
+### 2. Check Wallet Balance
 
 ```bash
 GET /wallet/balance
 x-api-key: sk_live_xxxxx
 ```
 
-Response:
+**Response:**
 ```json
 {
   "status": "success",
+  "message": "Balance retrieved",
   "data": {
-    "balance": 5000,
+    "balance": 50000,
     "currency": "NGN"
   }
 }
@@ -212,213 +207,361 @@ Content-Type: application/json
 
 {
   "wallet_number": "a1b2c3d4e5f6",
-  "amount": 1000
+  "amount": 10000
 }
 ```
 
-Response:
+**Response:**
 ```json
 {
   "status": "success",
   "message": "Transfer completed",
   "data": {
     "reference": "txf_xyz789",
-    "amount": 1000,
+    "amount": 10000,
     "recipient": "a1b2c3d4e5f6"
   }
 }
 ```
 
-### 4. View Transaction History
+### 4. View Transactions
 
 ```bash
 GET /wallet/transactions
 Authorization: Bearer <jwt_token>
 ```
 
-Response:
+**Response:**
 ```json
 {
   "status": "success",
+  "message": "Transactions retrieved",
   "data": {
     "transactions": [
       {
         "id": "uuid",
         "type": "deposit",
         "direction": "credit",
-        "amount": 5000,
+        "amount": 50000,
         "status": "success",
-        "reference": "dep_abc123",
-        "created_at": "2025-12-10T06:00:00Z"
+        "reference": "dep_a1b2c3d4e5f6",
+        "created_at": "2025-12-10T10:30:00Z"
       }
     ]
   }
 }
 ```
 
-## API Key System
+### 5. Create API Key
+
+```bash
+POST /keys/create
+Authorization: Bearer <jwt_token>
+Content-Type: application/json
+
+{
+  "name": "mobile-app",
+  "permissions": ["deposit", "read"],
+  "expiry": "1Y"
+}
+```
+
+**Response:**
+```json
+{
+  "status": "success",
+  "message": "API key created successfully",
+  "data": {
+    "api_key": "sk_live__xxxxx",
+    "expires_at": "2026-12-10T10:30:00Z"
+  }
+}
+```
+
+---
+
+## 🔑 API Key Management
 
 ### Permissions
-- `deposit` - Initialize deposits
-- `transfer` - Transfer funds between wallets
-- `read` - View balance and transaction history
+- **`deposit`** - Initialize deposits with Paystack
+- **`transfer`** - Transfer funds between wallets
+- **`read`** - View balance and transaction history
 
 ### Expiry Options
 - `1H` - 1 hour
-- `1D` - 1 day
+- `1D` - 1 day  
 - `1M` - 30 days
 - `1Y` - 365 days
 
-### Limits
-- Maximum **5 active API keys** per user
+### Constraints
+- **Max 5 active keys** per user
 - Expired keys can be rolled over with new expiry
-- API keys are shown only once during creation
+- Keys shown only once at creation
+- SHA256 hashed storage
 
 ### Rollover Expired Key
 
 ```bash
 POST /keys/rollover
 Authorization: Bearer <jwt_token>
-Content-Type: application/json
 
 {
   "expired_key_id": "uuid-of-expired-key",
-  "expiry": "1M"
+  "expiry": "1D"
 }
 ```
 
-New key inherits permissions from expired key.
+---
 
-## Paystack Integration
+## 💳 Paystack Integration
 
 ### Webhook Setup
 
-1. Go to Paystack Dashboard → Settings → Webhooks
-2. Add webhook URL: `https://yourdomain.com/wallet/paystack/webhook`
-3. Paystack will send `charge.success` events when payments complete
+1. Login to Paystack Dashboard
+2. Go to Settings → API Keys & Webhooks
+3. Add webhook URL: `https://yourdomain.com/wallet/paystack/webhook`
+4. Select events: `charge.success`
 
-### Testing Deposits
+### Testing Payments
 
-**Test Cards:**
-- Success: `4084084084084081`
-- Declined: `5060666666666666666`
+**Test Credentials:**
+```
+Card Number: 4084 0840 8408 4081
+Expiry: Any future date
+CVV: Any 3 digits
+OTP: 123456
+```
 
-Use any future expiry date and any CVV.
+For full testing guide: https://paystack.com/docs/payments/test-payments/
 
-Paystack test docs: https://paystack.com/docs/payments/test-payments/
+### Webhook Security
+- Paystack signs webhooks with HMAC-SHA512
+- Signature verified on each webhook request
+- Idempotent processing prevents duplicate credits
 
-## Security Features
+---
 
-- Paystack webhook signature verification
-- JWT token expiration (7 days default)
-- API key hashing (SHA256)
-- Permission-based access control
-- Idempotent transaction processing
-- Atomic wallet transfers (database transactions)
-- Insufficient balance checks
-- CORS middleware configuration
+## 🛡️ Security Features
 
-## Error Handling
+| Feature | Implementation |
+|---------|-----------------|
+| **Authentication** | JWT (Google OAuth 2.0) + API Key auth |
+| **API Key Storage** | SHA256 hashing |
+| **Webhook Verification** | HMAC-SHA512 signature validation |
+| **Token Expiration** | JWT: 7 days, API Keys: configurable (1H-1Y) |
+| **Access Control** | Permission-based (deposit/transfer/read) |
+| **Transactions** | Atomic database operations |
+| **Balance Checks** | Prevent insufficient fund transfers |
+| **Error Handling** | Comprehensive try-except with logging |
+| **Correlation IDs** | Request tracing via logging |
 
-The API returns standardized error responses:
+---
+
+## ⚠️ Error Responses
+
+All errors follow standardized format:
 
 ```json
 {
   "status": "failure",
   "status_code": 400,
-  "message": "Insufficient balance",
+  "message": "Invalid request",
   "error": {
-    "balance": 1000,
-    "required": 5000
+    "field": "error details"
   }
 }
 ```
 
-Common errors:
-- `400` - Invalid request (insufficient balance, invalid expiry format)
-- `401` - Authentication required or API key expired
-- `403` - Missing required permission
-- `404` - Resource not found (wallet, transaction, API key)
-- `422` - Validation error
+### Common Errors
 
-## Database Schema
+| Code | Message | Cause |
+|------|---------|-------|
+| 400 | Minimum deposit is 100 kobo | Amount too small |
+| 400 | Maximum 5 active API keys | Key limit reached |
+| 400 | Invalid expiry format | Use: 1H, 1D, 1M, 1Y |
+| 401 | API key is revoked or expired | Key invalid or expired |
+| 401 | Authentication required | Missing/invalid auth |
+| 403 | Insufficient API key permissions | Missing permission |
+| 404 | Wallet not found | User wallet missing |
+| 404 | Transaction not found | Invalid reference |
+| 500 | Failed to initialize payment | Paystack error |
+
+---
+
+## 📊 Database Schema
 
 ### Users
-- `id` (UUID, PK)
-- `google_id` (String, Unique)
-- `email` (String, Unique)
-- `full_name` (String)
+```
+- id (UUID, Primary Key)
+- google_id (String, Unique) - Google OAuth ID
+- email (String, Unique)
+- full_name (String)
+- created_at (DateTime)
+```
 
 ### Wallets
-- `id` (UUID, PK)
-- `user_id` (UUID, FK → users.id)
-- `wallet_number` (String, Unique)
-- `balance` (BigInt, in kobo)
-- `currency` (String, default: NGN)
+```
+- id (UUID, Primary Key)
+- user_id (UUID, Foreign Key → users)
+- wallet_number (String, Unique) - Identifier for transfers
+- balance (BigInteger) - Amount in kobo
+- currency (String) - Default: NGN
+- created_at (DateTime)
+```
 
 ### Transactions
-- `id` (UUID, PK)
-- `reference` (String, Unique)
-- `wallet_id` (UUID, FK → wallets.id)
-- `user_id` (UUID, FK → users.id)
-- `type` (Enum: deposit, transfer, withdrawal)
-- `direction` (Enum: credit, debit)
-- `amount` (BigInt, in kobo)
-- `status` (Enum: pending, success, failed)
-- `related_tx_id` (UUID, for linking transfer pairs)
+```
+- id (UUID, Primary Key)
+- reference (String, Unique)
+- wallet_id (UUID, Foreign Key → wallets)
+- user_id (UUID, Foreign Key → users)
+- type (Enum) - deposit, transfer, withdrawal
+- direction (Enum) - credit, debit
+- amount (BigInteger) - Amount in kobo
+- status (Enum) - pending, success, failed
+- related_tx_id (UUID) - Link transfer pairs
+- extra (JSON) - Additional metadata
+- created_at (DateTime)
+```
 
 ### API Keys
-- `id` (UUID, PK)
-- `user_id` (UUID, FK → users.id)
-- `name` (String)
-- `hashed_key` (String)
-- `permissions` (Array[String])
-- `expires_at` (DateTime)
-- `revoked` (Boolean)
+```
+- id (UUID, Primary Key)
+- user_id (UUID, Foreign Key → users)
+- name (String)
+- hashed_key (String) - SHA256 hashed
+- permissions (Array[String]) - deposit, transfer, read
+- expires_at (DateTime)
+- revoked (Boolean)
+- created_at (DateTime)
+```
 
-### Webhook Logs
-- `id` (UUID, PK)
-- `provider` (String, e.g., "paystack")
-- `payload` (JSON)
-- `headers` (JSON)
-- `processed` (Boolean)
+### Webhooks
+```
+- id (UUID, Primary Key)
+- provider (String) - e.g., "paystack"
+- payload (JSON) - Raw webhook data
+- headers (JSON) - Request headers
+- processed (Boolean)
+- created_at (DateTime)
+```
 
-## Development
+---
+
+## 🚀 Deployment
+
+### Production Checklist
+- [ ] Use strong `JWT_SECRET_KEY` (min 32 chars)
+- [ ] Configure production Paystack keys
+- [ ] Set up HTTPS/SSL certificates
+- [ ] Configure PostgreSQL backups
+- [ ] Set `ENVIRONMENT=production`
+- [ ] Update webhook URL in Paystack dashboard
+- [ ] Set `LOG_LEVEL=INFO` or `WARNING`
+- [ ] Configure CORS origins
+- [ ] Enable database connection pooling
+- [ ] Set up application monitoring
+
+### Docker Deployment
+
+```dockerfile
+FROM python:3.9-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install -r requirements.txt
+COPY . .
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+---
+
+## 📝 Development
+
+### Project Structure
+```
+├── api/
+│   ├── db/
+│   │   ├── base_model.py
+│   │   ├── database.py
+│   │   └── __init__.py
+│   ├── utils/
+│   │   ├── api_key.py
+│   │   ├── deps.py
+│   │   ├── logger.py
+│   │   ├── paystack.py
+│   │   ├── responses.py
+│   │   ├── security.py
+│   │   └── __init__.py
+│   └── v1/
+│       ├── models/
+│       │   ├── api_key.py
+│       │   ├── transaction.py
+│       │   ├── user.py
+│       │   ├── wallet.py
+│       │   └── webhook.py
+│       └── routes/
+│           ├── auth_route.py
+│           ├── api_key_route.py
+│           ├── wallet_route.py
+│           └── __init__.py
+├── alembic/
+├── main.py
+├── requirements.txt
+└── .env
+```
 
 ### Running Tests
 ```bash
-pytest
+pytest -v
 ```
 
 ### Database Migrations
 ```bash
-# Create new migration
-alembic revision --autogenerate -m "Description"
+# Create migration
+alembic revision --autogenerate -m "Add field"
 
 # Apply migrations
 alembic upgrade head
 
-# Rollback
+# Rollback one migration
 alembic downgrade -1
 ```
 
+### Logging
+- Structured JSON logging with correlation IDs
+- Logs to stdout (Docker-friendly)
+- Configurable level: DEBUG, INFO, WARNING, ERROR
 
-## Deployment
+---
 
-### Production Checklist
-- [ ] Set strong `JWT_SECRET_KEY`
-- [ ] Use production Paystack keys
-- [ ] Configure CORS allowed origins
-- [ ] Set up SSL/TLS (HTTPS)
-- [ ] Configure production database
-- [ ] Set up webhook URL in Paystack dashboard
-- [ ] Enable database backups
-- [ ] Set up monitoring/logging
-- [ ] Configure rate limiting
+## 📚 API Documentation
 
-## Support
+Automatic interactive API documentation:
+- **Swagger UI:** `http://localhost:8000/docs`
+- **ReDoc:** `http://localhost:8000/redoc`
+- **OpenAPI Schema:** `http://localhost:8000/openapi.json`
 
-For issues or questions:
-- API Documentation: `/docs`
-- Paystack Docs: https://paystack.com/docs
-- Create an issue in the repository
+---
+
+## 🤝 Contributing
+
+1. Fork repository
+2. Create feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit changes (`git commit -m 'Add amazing feature'`)
+4. Push to branch (`git push origin feature/amazing-feature`)
+5. Open Pull Request
+
+---
+
+## 📄 License
+
+This project is licensed under the MIT License - see LICENSE file for details.
+
+---
+
+## 📞 Support
+
+- **Issues:** Create an issue on GitHub
+- **Paystack Docs:** https://paystack.com/docs
+- **FastAPI Docs:** https://fastapi.tiangolo.com
+- **PostgreSQL Docs:** https://www.postgresql.org/docs
