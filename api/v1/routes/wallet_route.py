@@ -15,6 +15,15 @@ from api.utils.responses import success_response, fail_response
 router = APIRouter(prefix="/wallet", tags=["Wallet"])
 
 
+def kobo_to_naira(amount_in_kobo: int) -> float:
+    """Convert amount from kobo (smallest currency unit) to naira.
+    
+    1 Naira = 100 Kobo
+    Example: 1055 kobo = 10.55 NGN
+    """
+    return round(amount_in_kobo / 100, 2)
+
+
 class DepositRequest(BaseModel):
     amount: int  # Amount in kobo
 
@@ -302,7 +311,8 @@ async def check_deposit_status(
                 data={
                     "reference": reference,
                     "status": status_transaction.status.value,
-                    "amount": status_transaction.amount,
+                    "amount": kobo_to_naira(status_transaction.amount),
+                    "currency": "NGN",
                     "paystack_status": paystack_status,
                     "wallet_number": transaction_wallet.wallet_number if transaction_wallet else None
                 }
@@ -315,7 +325,8 @@ async def check_deposit_status(
                 data={
                     "reference": reference,
                     "status": status_transaction.status.value,
-                    "amount": status_transaction.amount,
+                    "amount": kobo_to_naira(status_transaction.amount),
+                    "currency": "NGN",
                     "wallet_number": transaction_wallet.wallet_number if transaction_wallet else None
                 }
             )
@@ -352,7 +363,7 @@ async def get_wallet_balance(
             status_code=200,
             message="Balance retrieved",
             data={
-                "balance": balance_wallet.balance,
+                "balance": kobo_to_naira(balance_wallet.balance),
                 "currency": balance_wallet.currency,
                 "wallet_number": balance_wallet.wallet_number
             }
@@ -475,7 +486,8 @@ async def transfer_funds(
             message="Transfer completed",
             data={
                 "reference": transfer_reference,
-                "amount": request.amount,
+                "amount": kobo_to_naira(request.amount),
+                "currency": "NGN",
                 "recipient": request.wallet_number,
                 "sender_wallet": sender_wallet.wallet_number,
                 "recipient_wallet": recipient_wallet.wallet_number
@@ -517,7 +529,8 @@ async def get_transaction_history(
                 "id": str(tx.id),
                 "type": tx.type.value,
                 "direction": tx.direction.value,
-                "amount": tx.amount,
+                "amount": kobo_to_naira(tx.amount),
+                "currency": "NGN",
                 "status": tx.status.value,
                 "reference": tx.reference,
                 "created_at": tx.created_at.isoformat(),

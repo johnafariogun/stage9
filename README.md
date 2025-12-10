@@ -57,6 +57,7 @@ LOG_LEVEL=INFO
 
 ```bash
 # Apply migrations
+alembic revision --autogenerate -m "initial migratons"
 alembic upgrade head
 
 # Start development server
@@ -490,7 +491,6 @@ CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
 │   │   ├── logger.py
 │   │   ├── paystack.py
 │   │   ├── responses.py
-│   │   ├── security.py
 │   │   └── __init__.py
 │   └── v1/
 │       ├── models/
