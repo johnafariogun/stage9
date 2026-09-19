@@ -14,7 +14,7 @@ A production-ready backend wallet service built with FastAPI, PostgreSQL, and Pa
 
 ```bash
 # Clone repository
-git clone https://github.com/idyweb/Wallet_Service_with_Paystack
+git clone https://github.com/johnafariogun/stage9
 cd Wallet_Service_with_Paystack
 
 # Create virtual environment
